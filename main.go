@@ -1,34 +1,57 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
 
+	_ "github.com/lib/pq"
 	"github.com/skarsden/BlogAggregator/internal/config"
+	"github.com/skarsden/BlogAggregator/internal/database"
 )
+
+type state struct {
+	db  *database.Queries
+	cfg *config.Config
+}
 
 func main() {
 	cfg, err := config.Read()
 	if err != nil {
 		log.Fatalf("error reading config: %v", err)
 	}
-	programState := &State{cfg: &cfg}
-	cmds := Commands{cmdNames: make(map[string]func(*State, Command) error)}
 
-	cmds.register("login", handlerLogin)
+	db, err := sql.Open("postgres", cfg.DBURL)
+	if err != nil {
+		log.Fatalf("error connecting to db: %v", err)
+	}
+	defer db.Close()
+	dbQueries := database.New(db)
 
-	if len(os.Args) < 3 {
-		fmt.Println("not enough arguements, please enter: >go run . <command> <args[...]>")
-		os.Exit(1)
+	programState := &state{
+		db:  dbQueries,
+		cfg: &cfg,
 	}
 
-	commandName := os.Args[1]
+	cmds := commands{
+		registeredCommands: make(map[string]func(*state, command) error),
+	}
+	cmds.register("login", handlerLogin)
+	cmds.register("register", handlerRegister)
+	cmds.register("reset", handlerReset)
+	cmds.register("users", handlerUsers)
 
-	cmd := Command{name: commandName, args: os.Args[2:]}
-	cmds.run(programState, cmd)
-}
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: cli <command> [args...]")
+		return
+	}
 
-type State struct {
-	cfg *config.Config
+	cmdName := os.Args[1]
+	cmdArgs := os.Args[2:]
+
+	err = cmds.run(programState, command{Name: cmdName, Args: cmdArgs})
+	if err != nil {
+		log.Fatal(err)
+	}
 }
